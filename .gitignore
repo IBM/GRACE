@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv
+.venv/
+
+# Data cache (large binary files, regenerate with build_conformer_cache.py)
+data/cache/
+
+# Experiments (checkpoints, predictions, tensorboard logs)
+experiments/
+logs/
+
+# NumPy / PyTorch artifacts
+*.npy
+*.pt
+*.ckpt
+
+# Project-specific exclusions
+context/
+
+# OS
+.DS_Store
+Thumbs.db

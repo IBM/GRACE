@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ccs3d"
+version = "v0.1.0"
+description = "3D model for collision cross-section (CCS) prediction adapting UniMol"
+requires-python = ">=3.10"
+dependencies = [
+    "unimol_tools",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "torch",
+    "scipy",
+    "lightning",
+    "rdkit",
+    "tensorboard",
+    "tqdm",
+    "huggingface_hub",
+    "pyyaml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ccs3d"]
+

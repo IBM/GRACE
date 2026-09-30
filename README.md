@@ -1,78 +1,147 @@
-<!-- This should be the location of the title of the repository, normally the short name -->
-# repo-template
+# GRACE
 
-<!-- Build Status, is a great thing to have at the top of your repository, it shows that you take your CI/CD as first class citizens -->
-<!-- [![Build Status](https://travis-ci.org/jjasghar/ibm-cloud-cli.svg?branch=master)](https://travis-ci.org/jjasghar/ibm-cloud-cli) -->
+Ion mobility mass spectrometry uses collision cross section (CCS) as an
+orthogonal descriptor for molecular annotation, but CCS prediction remains
+difficult because the measured value reflects the size, shape, and ionization
+state of a gas-phase molecular ion. Most machine-learning CCS predictors either
+ignore explicit 3D structure or treat adduct identity as a late categorical
+feature, which limits their ability to capture adduct-dependent geometric
+effects.
 
-<!-- Not always needed, but a scope helps the user understand in a short sentance like below, why this repo exists -->
-## Scope
+GRACE (Geometric Residual Adduct Conditioning via Early-fusion) is a 3D CCS
+predictor that adapts a pretrained molecular geometry encoder. It combines two
+inductive biases: a residual objective relative to an adduct-aware physical
+descriptor baseline, and adduct conditioning within the encoder via a learned
+adduct token and low-rank attention adapters.
 
-The purpose of this project is to provide a template for new open source repositories.
+For further details please see our manuscript on [arXiv](https://arxiv.org/abs/2609.12223).
 
-<!-- A more detailed Usage or detailed explaination of the repository here -->
-## Usage
+## Install
 
-This repository contains some example best practices for open source repositories:
+Python 3.10 and [uv](https://github.com/astral-sh/uv).
 
-* [LICENSE](LICENSE)
-* [README.md](README.md)
-* [CONTRIBUTING.md](CONTRIBUTING.md)
-* [MAINTAINERS.md](MAINTAINERS.md)
-* [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-<!-- A Changelog allows you to track major changes and things that happen, https://github.com/github-changelog-generator/github-changelog-generator can help automate the process -->
-* [CHANGELOG.md](CHANGELOG.md)
+```bash
+uv venv .venv --python 3.10
+source .venv/bin/activate
+uv pip install -e .
+```
 
-> These are optional
+The encoder's pretrained weights, about 180 MB, are downloaded on first use.
 
-<!-- The following are OPTIONAL, but strongly suggested to have in your repository. -->
-* [dco.yml](.github/dco.yml) - This enables DCO bot for you, please take a look https://github.com/probot/dco for more details.
-* [travis.yml](.travis.yml) - This is a example `.travis.yml`, please take a look https://docs.travis-ci.com/user/tutorial/ for more details.
+## Data
 
-These may be copied into a new or existing project to make it easier for developers not on a project team to collaborate.
+In our [manuscript](https://arxiv.org/abs/2609.12223), the model is trained with over 9,000 experimental molecule/adduct CCS records covering
+`[M+H]+`, `[M-H]-` and `[M+Na]+`.  Here, we provide a script `scripts/fetch_sample_data.py` to download a sample of 185 molecule/adduct/CCS datapoints from [PubChem](https://pubchem.ncbi.nlm.nih.gov) [CCSBase annotations](https://pubchem.ncbi.nlm.nih.gov/source/24290) that are by default saved to `data/data.csv`.
 
-<!-- A notes section is useful for anything that isn't covered in the Usage or Scope. Like what we have below. -->
-## Notes
+```bash
+python scripts/fetch_sample_data.py
+```
 
-**NOTE: While this boilerplate project uses the Apache 2.0 license, when
-establishing a new repo using this template, please use the
-license that was approved for your project.**
+`data.csv` has four columns: `index`, `smiles`, `adducts`, `label`, with the label
+in square angstroms. `data/splits/` holds two splits, each a JSON file with
+`train`, `val` and `test` lists of row indices.
 
-**NOTE: This repository has been configured with the [DCO bot](https://github.com/probot/dco).
-When you set up a new repository that uses the Apache license, you should
-use the DCO to manage contributions. The DCO bot will help enforce that.
-Please contact one of the IBM GH Org stewards.**
+| Split | How it partitions | What it measures |
+|-------|-------------------|------------------|
+| `random` | rows at random, 80/10/10 | interpolation |
+| `adduct_sensitive` | by molecule; whichever molecules shift most across adducts go to val and test | adduct-driven generalization |
 
-<!-- Questions can be useful but optional, this gives you a place to say, "This is how to contact this project maintainers or create PRs -->
-If you have any questions or issues you can create a new [issue here][issues].
+Build the conformer cache before training. The cache is a pickle of tokenised
+encoder inputs and is not kept in the repository.
 
-Pull requests are very welcome! Make sure your patches are well tested.
-Ideally create a topic branch for every separate change you make. For
-example:
+```bash
+python -m ccs3d.launch.build_conformer_cache                      # one conformer
+python -m ccs3d.launch.build_conformer_cache --num_conformers 10  # ten, with MMFF energies
+```
 
-1. Fork the repo
-2. Create your feature branch (`git checkout -b my-new-feature`)
-3. Commit your changes (`git commit -am 'Added some feature'`)
-4. Push to the branch (`git push origin my-new-feature`)
-5. Create new Pull Request
+The ten-conformer build may take some time, since every molecule is processed using [ETKDG and MMFF](https://www.rdkit.org/docs/GettingStartedInPython.html).
+
+Regenerate the cache whenever `data.csv` changes. Cache filenames record only the
+conformer count and whether hydrogens were removed, and row i of the pickle is
+matched to row i of the CSV by position. Changing the number of rows raises an
+`IndexError` from the split indices. Reordering rows or editing a SMILES in place
+raises nothing, and training then pairs one molecule's geometry with another
+molecule's CCS value. An existing cache is never overwritten, so delete it first.
+
+```bash
+rm data/cache/unimol_inputs_all_h.pkl
+python -m ccs3d.launch.build_conformer_cache
+```
+
+## Train
+
+```bash
+python -m ccs3d.launch.train_finetune \
+    --split random \
+    --run_name random/single/residual \
+    --residual_target
+```
+
+Seeds 0 through 4 run at the defaults: 200 epochs, batch 32, one conformer, LoRA
+rank 16, cosine schedule with 10 warmup epochs.
+
+```bash
+--seeds 0                 # one seed instead of five
+--num_conformers 10 --pooling boltzmann
+--residual_target         # predict y - ridge(descriptors)
+--no_lora                 # adduct token only, no adapters
+--encoder_repr gasteiger  # charge-biased atom pooling; needs the --gasteiger cache
+```
+
+`--pooling` chooses how several conformers collapse into one embedding: `single`,
+`uniform`, `boltzmann`, or `learned`. It is ignored when `--num_conformers 1`.
+
+Each run writes to `experiments/<run_name>/seed_<s>/`: the best-validation
+checkpoint and periodic snapshots under `checkpoints/`, metrics in
+`best_val_metrics.json` and `test_at_epochs.csv`, and predictions as `.npy`
+arrays. Aggregates across seeds go to `experiments/<run_name>/results_<split>.json`.
+
+The `tfevents` file is written to the seed directory. Pass `--tb_logdir` to
+collect logs from several runs under one root instead.
+
+```bash
+tensorboard --logdir experiments/
+```
+
+## Evaluate on external sets with trained model
+
+`scripts/run_external_eval.py` takes a checkpoint file and a ridge model pickle and predicts CCS values for a given set of molecules.  One set available for direct testing is [GPCL](https://pubs.acs.org/jcisd8/article-abstract/64/3/749/987751/Molecular-Gas-Phase-Conformational-Ensembles?redirectedFrom=fulltext), a 20-compound amino acid and metabolite set used in our manuscript, downloadable [here](https://zenodo.org/records/22902586) as `gpcl_smiles_adducts.csv`.
+
+Input dataset CSVs use the same column-format as `data.csv` described above.
+
+```bash
+python scripts/run_external_eval.py \
+    --ckpt        experiments/seed_0/checkpoints/best_val.ckpt \
+    --data        my_dataset.csv \
+    --output-dir  external_evaluation \
+    --ridge-model data/ridge_model_random.pkl  # required if model trained with --residual_target
+```
+
+Evaluation writes a conformer cache pickle, `<output-dir>/conformer_cache_k<K>.pkl`, keyed by SMILES.
+It is reused on later runs and extended automatically when new molecules are encountered — no manual
+deletion is needed when switching datasets. To force a full rebuild, delete the file first.
+
+```bash
+rm results/external_eval/conformer_cache_k1.pkl
+```
+
+Outputs are two CSV files: per-molecule predictions and evaluation metrics. Metrics are only written when ground-truth labels are provided in the input.
+
+## Trained model for evaluation
+
+One of the models described in the companion paper that is trained with the full training dataset using a random split with single conformer pooling and the residual_target option is provided [here](https://github.com/IBM/GRACE/releases/tag/v0.1.0).  As already described above, the model for evaluation requires two files, a checkpoint and a ridge model pickle file.
+
+## Citation
+
+```
+@article{suryanarayanan2026predicting,
+  title={Predicting Collision Cross Sections with GRACE: Geometric Residual Adduct Conditioning via Early-fusion},
+  author={Suryanarayanan, Parthasarathy and Das, Susanta and Sethi, Shreyans and Merz Jr, Kenneth M and Morrone, Joseph A},
+  journal={arXiv preprint arXiv:2609.12223},
+  year={2026}
+}
+```
 
 ## License
 
-All source files must include a Copyright and License header. The SPDX license header is 
-preferred because it can be easily scanned.
-
-If you would like to see the detailed LICENSE click [here](LICENSE).
-
-```text
-#
-# Copyright IBM Corp. {Year project was created} - {Current Year}
-# SPDX-License-Identifier: Apache-2.0
-#
-```
-## Authors
-
-Optionally, you may include a list of authors, though this is redundant with the built-in
-GitHub list of contributors.
-
-- Author: New OpenSource IBMer <new-opensource-ibmer@ibm.com>
-
-[issues]: https://github.com/IBM/repo-template/issues/new
+This code is released under the Apache 2.0 license. To read the full text of the license, see [LICENSE](LICENSE)
