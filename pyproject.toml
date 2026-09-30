@@ -9,6 +9,7 @@ description = "3D model for collision cross-section (CCS) prediction adapting Un
 requires-python = ">=3.10"
 dependencies = [
     "unimol_tools",
+    "tokenizers>=0.13",
     "numpy",
     "pandas",
     "scikit-learn",
