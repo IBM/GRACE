@@ -18,10 +18,10 @@ For further details please see our manuscript on [arXiv](https://arxiv.org/abs/2
 
 ## Install
 
-Python 3.10 and [uv](https://github.com/astral-sh/uv).
+Python 3.11 and [uv](https://github.com/astral-sh/uv).
 
 ```bash
-uv venv .venv --python 3.10
+uv venv .venv --python 3.11
 source .venv/bin/activate
 uv pip install -e .
 ```

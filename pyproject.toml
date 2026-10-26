@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "ccs3d"
 version = "v0.1.0"
 description = "3D model for collision cross-section (CCS) prediction adapting UniMol"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "unimol_tools",
     "tokenizers>=0.13",
